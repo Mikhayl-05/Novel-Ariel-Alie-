@@ -1,0 +1,228 @@
+/* ====================================================
+   LOADING SCREEN — CSS
+   ==================================================== */
+#loading-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-cream);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+#loading-screen.hidden {
+  opacity: 0;
+  transform: scale(1.04);
+  pointer-events: none;
+}
+
+.loading-ornament {
+  font-size: 2rem;
+  color: var(--accent);
+  margin-bottom: 1.5rem;
+  animation: loadingPulse 2s ease-in-out infinite;
+}
+@keyframes loadingPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+.loading-title {
+  font-family: var(--font-serif);
+  font-size: 1.6rem;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--ink);
+  text-align: center;
+  margin-bottom: 0.4rem;
+}
+.loading-subtitle {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.loading-bar-wrap {
+  width: 260px;
+  height: 3px;
+  background: var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 1.2rem;
+}
+.loading-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), #e0b898);
+  border-radius: 4px;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.loading-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  min-height: 1.3em;
+  transition: opacity 0.4s ease;
+  margin-bottom: 2.8rem;
+}
+
+.loading-quote {
+  max-width: 340px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  font-style: italic;
+  color: var(--muted);
+  line-height: 1.7;
+  border-top: 1px solid var(--rule);
+  padding-top: 1.5rem;
+  margin-bottom: 0;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.loading-quote.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Tombol Membuka Kisah */
+#open-story-btn {
+  display: none;
+  margin-top: 2.4rem;
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 500;
+  padding: 0.75rem 2.2rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 40px;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(201,125,90,0.35);
+  transition: all 0.25s ease;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: none;
+}
+#open-story-btn.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+#open-story-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(201,125,90,0.45);
+}
+#open-story-btn:active {
+  transform: translateY(0);
+}
+
+
+/* ====================================================
+   POPUP — WIP NOTICE (Bab LXXVIII - Bab CX)
+   ==================================================== */
+#wip-popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+#wip-popup-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+#wip-popup-box {
+  background: var(--bg-card);
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35), 0 4px 16px rgba(0,0,0,0.15);
+  max-width: 480px;
+  width: 100%;
+  padding: 2rem 2rem 1.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  transform: translateY(18px) scale(0.97);
+  transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.35s ease;
+  opacity: 0;
+}
+#wip-popup-overlay.visible #wip-popup-box {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+#wip-popup-icon {
+  font-size: 2rem;
+  text-align: center;
+  line-height: 1;
+}
+#wip-popup-title {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: center;
+  line-height: 1.35;
+}
+#wip-popup-body {
+  font-family: var(--font-sans);
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.65;
+  text-align: center;
+}
+#wip-popup-body strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+#wip-popup-rule {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 0;
+}
+#wip-popup-actions {
+  display: flex;
+  gap: 0.65rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.wip-btn {
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 50px;
+  padding: 0.55rem 1.4rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  outline: none;
+}
+.wip-btn-primary {
+  background: var(--accent);
+  color: var(--btn-active-text);
+}
+.wip-btn-primary:hover { background: var(--accent-hover); }
+.wip-btn-secondary {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+}
+.wip-btn-secondary:hover { color: var(--ink); border-color: var(--ink); }
