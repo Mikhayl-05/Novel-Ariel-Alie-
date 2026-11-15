@@ -472,6 +472,7 @@ export function ShortcutsModal({
   if (!open) return null;
 
   const rows: Array<[string, string]> = [
+    ['/ (Garis Miring)', 'Buka menu cepat sisipkan Dialog, Blok, Gambar, atau Format'],
     ['Ctrl / Cmd + Z', 'Undo'],
     ['Ctrl / Cmd + Y atau Shift+Z', 'Redo'],
     ['Ctrl / Cmd + B', 'Tebal (Bold)'],

@@ -197,3 +197,49 @@ export function hasUnpublishedChanges(chapter: StudioChapter): boolean {
     chapter.draftEffect !== (chapter.publishedEffect ?? 'none')
   );
 }
+
+/**
+ * Determines whether the ProseMirror instance should call `setContent`.
+ * Autosave `draftVersion` increments MUST NOT trigger `setContent`, otherwise the
+ * author's typing cursor jumps back to position 0 mid-keystroke.
+ */
+export function shouldReloadEditorDocument(input: {
+  loadedChapterId: string | null;
+  nextChapterId: string | null;
+  syncedReloadCounter: number;
+  reloadCounter: number;
+}): boolean {
+  if (!input.nextChapterId) return false;
+  if (input.loadedChapterId !== input.nextChapterId) return true;
+  return input.syncedReloadCounter !== input.reloadCounter;
+}
+
+export function shouldClearPendingSave(
+  dispatchedSeq: number,
+  latestEditSeq: number,
+): boolean {
+  return latestEditSeq <= dispatchedSeq;
+}
+
+/**
+ * Merges server-assigned version/timestamp metadata after autosave completes.
+ * When newer keystrokes were entered while the network request was in flight,
+ * preserve the newer local draft content instead of overwriting it with the stale response.
+ */
+export function mergeSyncedChapterMetadata(
+  current: StudioChapter,
+  synced: StudioChapter,
+  preserveNewerLocalEdits: boolean,
+): StudioChapter {
+  if (!preserveNewerLocalEdits) {
+    return synced;
+  }
+  return {
+    ...current,
+    status: synced.status,
+    draftVersion: synced.draftVersion,
+    updatedAt: synced.updatedAt,
+    publishedAt: synced.publishedAt,
+    publishedVersion: synced.publishedVersion,
+  };
+}

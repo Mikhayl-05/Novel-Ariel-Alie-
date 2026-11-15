@@ -28,6 +28,7 @@ import {
 export interface StudioExtensionCallbacks {
   onSaveShortcut?: () => void;
   onLinkShortcut?: () => void;
+  slashKeyDownRef?: { current: ((key: string) => boolean) | null };
 }
 
 /**
@@ -417,6 +418,11 @@ export function createNovelEditorExtensions(callbacks?: StudioExtensionCallbacks
           return true;
         },
         'Mod-Shift-x': () => this.editor.chain().focus().toggleStrike().run(),
+        ArrowDown: () => Boolean(callbacks?.slashKeyDownRef?.current?.('ArrowDown')),
+        ArrowUp: () => Boolean(callbacks?.slashKeyDownRef?.current?.('ArrowUp')),
+        Enter: () => Boolean(callbacks?.slashKeyDownRef?.current?.('Enter')),
+        Tab: () => Boolean(callbacks?.slashKeyDownRef?.current?.('Tab')),
+        Escape: () => Boolean(callbacks?.slashKeyDownRef?.current?.('Escape')),
       };
     },
   });
@@ -445,7 +451,8 @@ export function createNovelEditorExtensions(callbacks?: StudioExtensionCallbacks
     Image.configure({ inline: false, allowBase64: true }),
     CharacterCount,
     Placeholder.configure({
-      placeholder: 'Mulai menulis naskah Ariel & Alie di sini...',
+      placeholder:
+        'Mulai menulis naskah Ariel & Alie di sini… (ketik "/" untuk menyisipkan blok atau dialog)',
     }),
     BlockLineSpacing,
     DialogueBlock,

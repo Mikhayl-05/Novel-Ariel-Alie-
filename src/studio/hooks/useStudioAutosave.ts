@@ -7,7 +7,6 @@ import {
 import {
   createChapterRevision,
   saveChapterDraftWithConcurrency,
-  subscribeToNovelChapterUpdates,
   type SaveDraftPatch,
 } from '../services/studioRepository';
 import type {
@@ -15,13 +14,19 @@ import type {
   SaveState,
   StudioChapter,
 } from '../types/studio';
-import { detectVersionConflict } from '../utils/chapterOrdering';
+import {
+  detectVersionConflict,
+  shouldClearPendingSave,
+} from '../utils/chapterOrdering';
 
 interface UseStudioAutosaveOptions {
   novelId: string | null;
   activeChapter: StudioChapter | null;
-  onChapterSynced: (chapter: StudioChapter) => void;
-  onRemoteChapterChanged: (chapter: StudioChapter) => void;
+  onChapterSynced: (
+    chapter: StudioChapter,
+    preserveNewerLocalEdits: boolean,
+    forceReloadEditor?: boolean,
+  ) => void;
 }
 
 export interface UseStudioAutosaveResult {
@@ -44,7 +49,6 @@ export function useStudioAutosave({
   novelId,
   activeChapter,
   onChapterSynced,
-  onRemoteChapterChanged,
 }: UseStudioAutosaveOptions): UseStudioAutosaveResult {
   const [saveState, setSaveState] = useState<SaveState>(() =>
     typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'saved',
@@ -56,15 +60,18 @@ export function useStudioAutosave({
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followUpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const lastRevisionAtRef = useRef<Record<string, number>>({});
   const inFlightRef = useRef(false);
+  const editSeqRef = useRef(0);
 
   const pendingPayloadRef = useRef<{
     chapterId: string;
     baseVersion: number;
     baseUpdatedAt: string;
     patch: SaveDraftPatch;
+    seq: number;
   } | null>(null);
 
   const activeChapterRef = useRef(activeChapter);
@@ -76,6 +83,7 @@ export function useStudioAutosave({
       baseVersion: number,
       patch: SaveDraftPatch,
       forceOverwrite = false,
+      dispatchedSeq = editSeqRef.current,
     ): Promise<StudioChapter | null> => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
         setSaveState('offline');
@@ -91,6 +99,9 @@ export function useStudioAutosave({
       setSaveState('syncing');
       setSaveError(null);
 
+      let hadConflict = false;
+      let shouldFollowUp = false;
+
       try {
         const result = await saveChapterDraftWithConcurrency(
           chapterId,
@@ -100,6 +111,7 @@ export function useStudioAutosave({
         );
 
         if (result.kind === 'conflict') {
+          hadConflict = true;
           setSaveState('conflict');
           setConflict({
             chapterId,
@@ -112,13 +124,36 @@ export function useStudioAutosave({
         }
 
         retryCountRef.current = 0;
-        pendingPayloadRef.current = null;
-        setConflict(null);
-        setPendingBackup(false);
-        setSaveState('saved');
-        setLastSavedAt(Date.now());
-        await clearLocalDraftBackup(chapterId);
-        onChapterSynced(result.chapter);
+        const canClear = shouldClearPendingSave(dispatchedSeq, editSeqRef.current);
+
+        if (canClear) {
+          pendingPayloadRef.current = null;
+          setConflict(null);
+          setPendingBackup(false);
+          setSaveState('saved');
+          setLastSavedAt(Date.now());
+          await clearLocalDraftBackup(chapterId);
+          onChapterSynced(result.chapter, false, false);
+        } else {
+          // User kept typing while HTTP request was in flight:
+          // advance baseVersion/baseUpdatedAt so the follow-up save uses the new server version,
+          // and merge ONLY version/status metadata without touching newer ProseMirror text or React draft content.
+          if (
+            pendingPayloadRef.current &&
+            pendingPayloadRef.current.chapterId === chapterId
+          ) {
+            pendingPayloadRef.current = {
+              ...pendingPayloadRef.current,
+              baseVersion: result.chapter.draftVersion,
+              baseUpdatedAt: result.chapter.updatedAt,
+            };
+            shouldFollowUp = true;
+          }
+          setConflict(null);
+          setSaveState('saving');
+          setLastSavedAt(Date.now());
+          onChapterSynced(result.chapter, true, false);
+        }
 
         // Periodically store an autosave revision snapshot (every 5 minutes of active editing)
         const now = Date.now();
@@ -150,6 +185,7 @@ export function useStudioAutosave({
                 latest.baseVersion,
                 latest.patch,
                 false,
+                latest.seq,
               );
             }
           }, backoffMs);
@@ -158,6 +194,27 @@ export function useStudioAutosave({
         return null;
       } finally {
         inFlightRef.current = false;
+
+        if (
+          shouldFollowUp &&
+          !hadConflict &&
+          pendingPayloadRef.current &&
+          pendingPayloadRef.current.chapterId === chapterId
+        ) {
+          if (followUpTimerRef.current) clearTimeout(followUpTimerRef.current);
+          followUpTimerRef.current = setTimeout(() => {
+            const nextQueued = pendingPayloadRef.current;
+            if (nextQueued && nextQueued.chapterId === chapterId) {
+              void commitToSupabase(
+                nextQueued.chapterId,
+                nextQueued.baseVersion,
+                nextQueued.patch,
+                false,
+                nextQueued.seq,
+              );
+            }
+          }, 180);
+        }
       }
     },
     [onChapterSynced],
@@ -167,12 +224,15 @@ export function useStudioAutosave({
     (chapterId: string, baseVersion: number, patch: SaveDraftPatch) => {
       const current = activeChapterRef.current;
       const baseUpdatedAt = current?.updatedAt ?? new Date().toISOString();
+      editSeqRef.current += 1;
+      const seq = editSeqRef.current;
 
       pendingPayloadRef.current = {
         chapterId,
         baseVersion,
         baseUpdatedAt,
         patch,
+        seq,
       };
 
       setSaveState(
@@ -195,7 +255,13 @@ export function useStudioAutosave({
       timerRef.current = setTimeout(() => {
         const queued = pendingPayloadRef.current;
         if (!queued || queued.chapterId !== chapterId) return;
-        void commitToSupabase(queued.chapterId, queued.baseVersion, queued.patch, false);
+        void commitToSupabase(
+          queued.chapterId,
+          queued.baseVersion,
+          queued.patch,
+          false,
+          queued.seq,
+        );
       }, DEBOUNCE_MS);
     },
     [commitToSupabase, novelId],
@@ -211,6 +277,10 @@ export function useStudioAutosave({
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
+      if (followUpTimerRef.current) {
+        clearTimeout(followUpTimerRef.current);
+        followUpTimerRef.current = null;
+      }
       const queued = pendingPayloadRef.current;
       if (!queued) {
         return activeChapterRef.current;
@@ -220,6 +290,7 @@ export function useStudioAutosave({
         queued.baseVersion,
         queued.patch,
         forceOverwrite,
+        queued.seq,
       );
     },
     [commitToSupabase],
@@ -243,11 +314,13 @@ export function useStudioAutosave({
           serverUpdatedAt: activeChapter.updatedAt,
         })
       ) {
+        editSeqRef.current += 1;
         pendingPayloadRef.current = {
           chapterId: activeChapter.id,
           baseVersion: backup.baseVersion,
           baseUpdatedAt: backup.baseUpdatedAt,
           patch: backup.patch,
+          seq: editSeqRef.current,
         };
         setConflict({
           chapterId: activeChapter.id,
@@ -264,12 +337,18 @@ export function useStudioAutosave({
     };
   }, [activeChapter?.id]);
 
-  // Online / Offline reconnection auto-sync
+  // Online / Offline reconnection auto-sync (no Realtime background overwrite)
   useEffect(() => {
     const handleOnline = () => {
       const queued = pendingPayloadRef.current;
       if (queued) {
-        void commitToSupabase(queued.chapterId, queued.baseVersion, queued.patch, false);
+        void commitToSupabase(
+          queued.chapterId,
+          queued.baseVersion,
+          queued.patch,
+          false,
+          queued.seq,
+        );
       } else {
         setSaveState('saved');
       }
@@ -297,44 +376,11 @@ export function useStudioAutosave({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Supabase Realtime sync for multi-tab / remote updates
-  useEffect(() => {
-    if (!novelId) return;
-    return subscribeToNovelChapterUpdates(novelId, (remoteChapter) => {
-      const current = activeChapterRef.current;
-      if (!current || remoteChapter.id !== current.id) {
-        onRemoteChapterChanged(remoteChapter);
-        return;
-      }
-
-      // If we have unsaved local edits and remote bumped draftVersion, flag conflict
-      if (
-        pendingPayloadRef.current &&
-        pendingPayloadRef.current.chapterId === remoteChapter.id &&
-        remoteChapter.draftVersion > pendingPayloadRef.current.baseVersion
-      ) {
-        setConflict({
-          chapterId: remoteChapter.id,
-          localVersion: pendingPayloadRef.current.baseVersion,
-          serverVersion: remoteChapter.draftVersion,
-          serverUpdatedAt: remoteChapter.updatedAt,
-          serverChapter: remoteChapter,
-        });
-        setSaveState('conflict');
-        return;
-      }
-
-      if (remoteChapter.draftVersion > current.draftVersion) {
-        onChapterSynced(remoteChapter);
-      }
-    });
-  }, [novelId, onChapterSynced, onRemoteChapterChanged]);
-
   const resolveConflictUseServer = useCallback(async () => {
     if (!conflict) return;
     pendingPayloadRef.current = null;
     await clearLocalDraftBackup(conflict.chapterId);
-    onChapterSynced(conflict.serverChapter);
+    onChapterSynced(conflict.serverChapter, false, true);
     setConflict(null);
     setPendingBackup(false);
     setSaveState('saved');
@@ -352,6 +398,7 @@ export function useStudioAutosave({
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (followUpTimerRef.current) clearTimeout(followUpTimerRef.current);
     };
   }, []);
 

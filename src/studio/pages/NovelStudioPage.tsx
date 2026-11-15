@@ -2,22 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useEditor } from '@tiptap/react';
 import {
-  BookOpen,
   Check,
   CloudOff,
   ExternalLink,
   Eye,
   Loader2,
   LogOut,
+  Moon,
   PanelLeft,
   PanelRight,
   RefreshCw,
+  Sun,
   UploadCloud,
 } from 'lucide-react';
 import { VisualEffectsLayer } from '../../components/VisualEffectsLayer';
 import type { VfxKey } from '../../types/novel';
 import { AdminLoginView } from '../components/AdminLoginView';
 import { DocumentWorkspaceCanvas } from '../components/DocumentWorkspaceCanvas';
+import { SlashCommandMenu } from '../components/SlashCommandMenu';
 import { StudioInspectorPanel } from '../components/StudioInspectorPanel';
 import { StudioLivePreview } from '../components/StudioLivePreview';
 import { StudioMenuBar } from '../components/StudioMenuBar';
@@ -40,6 +42,7 @@ import {
   createChapterRevision,
   createNovel,
   deleteChapterById,
+  fetchChapterById,
   fetchChaptersByNovel,
   fetchNovels,
   importLegacyChaptersAsAdmin,
@@ -61,8 +64,10 @@ import type {
 import {
   createNewChapterPayload,
   duplicateChapterPayload,
+  mergeSyncedChapterMetadata,
   moveChapterByDelta,
   reorderChaptersByIds,
+  shouldReloadEditorDocument,
 } from '../utils/chapterOrdering';
 import {
   EMPTY_TIPTAP_DOC,
@@ -71,8 +76,17 @@ import {
   serializeTiptapDocToReaderHtml,
 } from '../utils/novelContentCodec';
 
+const STUDIO_THEME_STORAGE_KEY = 'novel-studio-theme';
+
 export function NovelStudioPage() {
   const auth = useStudioAuth();
+
+  const [studioTheme, setStudioTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    return window.localStorage.getItem(STUDIO_THEME_STORAGE_KEY) === 'light'
+      ? 'light'
+      : 'dark';
+  });
 
   const [novels, setNovels] = useState<StudioNovel[]>([]);
   const [activeNovelId, setActiveNovelId] = useState<string | null>(null);
@@ -103,6 +117,7 @@ export function NovelStudioPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importing, setImporting] = useState(false);
 
+  const [editorReloadCounter, setEditorReloadCounter] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [testVfx, setTestVfx] = useState<{
     key: number;
@@ -113,12 +128,23 @@ export function NovelStudioPage() {
   const isProgrammaticLoadRef = useRef(false);
   const activeChapterRef = useRef<StudioChapter | null>(null);
   const flushSaveRef = useRef<((forceOverwrite?: boolean) => Promise<StudioChapter | null>) | null>(null);
+  const slashKeyDownRef = useRef<((key: string) => boolean) | null>(null);
 
   const activeChapter = useMemo(
     () => chapters.find((c) => c.id === activeChapterId) ?? chapters[0] ?? null,
     [chapters, activeChapterId],
   );
   activeChapterRef.current = activeChapter;
+
+  const toggleStudioTheme = useCallback(() => {
+    setStudioTheme((prev) => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(STUDIO_THEME_STORAGE_KEY, next);
+      }
+      return next;
+    });
+  }, []);
 
   const showNotice = useCallback((msg: string) => {
     setNotice(msg);
@@ -130,13 +156,18 @@ export function NovelStudioPage() {
     return () => clearTimeout(t);
   }, [notice]);
 
-  // Apply studio body class exclusively while /editor is mounted
+  // Apply studio body & theme classes exclusively while /editor is mounted
   useEffect(() => {
     document.body.classList.add('studio-mode');
     return () => {
-      document.body.classList.remove('studio-mode');
+      document.body.classList.remove('studio-mode', 'studio-theme-dark', 'studio-theme-light');
     };
   }, []);
+
+  useEffect(() => {
+    document.body.classList.toggle('studio-theme-dark', studioTheme === 'dark');
+    document.body.classList.toggle('studio-theme-light', studioTheme === 'light');
+  }, [studioTheme]);
 
   // Listen to VFX test triggers inside studio
   useEffect(() => {
@@ -154,25 +185,30 @@ export function NovelStudioPage() {
     return () => window.removeEventListener('studio:test-vfx', handler);
   }, []);
 
-  const handleChapterSynced = useCallback((synced: StudioChapter) => {
-    setChapters((prev) =>
-      prev.map((c) => (c.id === synced.id ? synced : c)),
-    );
-  }, []);
-
-  const handleRemoteChapterChanged = useCallback((remote: StudioChapter) => {
-    setChapters((prev) => {
-      const exists = prev.some((c) => c.id === remote.id);
-      if (!exists) return prev;
-      return prev.map((c) => (c.id === remote.id ? remote : c));
-    });
-  }, []);
+  const handleChapterSynced = useCallback(
+    (
+      synced: StudioChapter,
+      preserveNewerLocalEdits: boolean,
+      forceReloadEditor = false,
+    ) => {
+      setChapters((prev) =>
+        prev.map((c) =>
+          c.id === synced.id
+            ? mergeSyncedChapterMetadata(c, synced, preserveNewerLocalEdits)
+            : c,
+        ),
+      );
+      if (forceReloadEditor) {
+        setEditorReloadCounter((n) => n + 1);
+      }
+    },
+    [],
+  );
 
   const autosave = useStudioAutosave({
     novelId: activeNovelId,
     activeChapter,
     onChapterSynced: handleChapterSynced,
-    onRemoteChapterChanged: handleRemoteChapterChanged,
   });
   flushSaveRef.current = autosave.flushSave;
 
@@ -226,6 +262,7 @@ export function NovelStudioPage() {
         onLinkShortcut: () => {
           openLinkModalFromEditor();
         },
+        slashKeyDownRef,
       }),
     [openLinkModalFromEditor, showNotice],
   );
@@ -255,20 +292,29 @@ export function NovelStudioPage() {
     setLinkInitialHref(attrs.href || '');
   }, [linkModalOpen, editor]);
 
-  // Synchronize Tiptap editor when active chapter changes or server reloads version
-  const syncedChapterMarkerRef = useRef<string>('');
+  // Synchronize Tiptap editor ONLY when switching active chapter OR explicit reload/conflict resolution.
+  // Never re-run setContent when autosave bumps draftVersion, otherwise cursor jumps to start.
+  const loadedChapterIdRef = useRef<string | null>(null);
+  const syncedReloadCounterRef = useRef<number>(0);
   useEffect(() => {
     if (!editor || !activeChapter) return;
-    const marker = `${activeChapter.id}:${activeChapter.draftVersion}`;
-    if (syncedChapterMarkerRef.current === marker) return;
-    syncedChapterMarkerRef.current = marker;
+    const shouldReload = shouldReloadEditorDocument({
+      loadedChapterId: loadedChapterIdRef.current,
+      nextChapterId: activeChapter.id,
+      syncedReloadCounter: syncedReloadCounterRef.current,
+      reloadCounter: editorReloadCounter,
+    });
+    if (!shouldReload) return;
+
+    loadedChapterIdRef.current = activeChapter.id;
+    syncedReloadCounterRef.current = editorReloadCounter;
 
     isProgrammaticLoadRef.current = true;
     editor.commands.setContent(activeChapter.draftDoc ?? EMPTY_TIPTAP_DOC, {
       emitUpdate: false,
     });
     isProgrammaticLoadRef.current = false;
-  }, [editor, activeChapter]);
+  }, [editor, activeChapter, editorReloadCounter]);
 
   // Load initial novels & chapters once authenticated
   useEffect(() => {
@@ -682,6 +728,20 @@ export function NovelStudioPage() {
     }
   };
 
+  const handleManualRefreshFromServer = async () => {
+    if (!activeChapter) return;
+    try {
+      await autosave.flushSave();
+      const fresh = await fetchChapterById(activeChapter.id);
+      handleChapterSynced(fresh, false, true);
+      showNotice('Bab dimuat ulang dari Supabase.');
+    } catch (err) {
+      showNotice(
+        err instanceof Error ? err.message : 'Gagal memuat ulang bab dari server.',
+      );
+    }
+  };
+
   const metrics = useMemo(
     () => extractDocumentMetrics(activeChapter?.draftDoc),
     [activeChapter?.draftDoc],
@@ -700,6 +760,8 @@ export function NovelStudioPage() {
         sessionExpiredNotice={auth.sessionExpiredNotice}
         submitting={auth.submitting}
         userEmail={auth.user?.email}
+        studioTheme={studioTheme}
+        onToggleTheme={toggleStudioTheme}
         onSignIn={auth.signIn}
         onSignOut={auth.signOut}
       />
@@ -728,12 +790,14 @@ export function NovelStudioPage() {
                 : 'Semua perubahan tersimpan';
 
   return (
-    <div className="studio-root studio-allow-select">
+    <div
+      className={`studio-root studio-allow-select studio-theme-${studioTheme}`}
+    >
       {/* Top Document Header Bar */}
       <header className="studio-header">
         <div className="studio-header-left">
           <div className="studio-brand-mark" aria-hidden="true">
-            <BookOpen size={17} />
+            <span>✦</span>
           </div>
           <div className="studio-doc-heading">
             <div className="studio-doc-title-row">
@@ -784,6 +848,27 @@ export function NovelStudioPage() {
 
           <button
             type="button"
+            className="studio-btn studio-btn-secondary studio-btn-sm studio-theme-toggle-btn"
+            title={
+              studioTheme === 'dark'
+                ? 'Beralih ke Mode Terang'
+                : 'Beralih ke Mode Gelap'
+            }
+            aria-label={
+              studioTheme === 'dark'
+                ? 'Beralih ke Mode Terang'
+                : 'Beralih ke Mode Gelap'
+            }
+            onClick={toggleStudioTheme}
+          >
+            {studioTheme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            <span className="studio-hide-xs">
+              {studioTheme === 'dark' ? 'Terang' : 'Gelap'}
+            </span>
+          </button>
+
+          <button
+            type="button"
             className="studio-btn studio-btn-secondary studio-btn-sm"
             disabled={!activeChapter}
             onClick={() =>
@@ -810,7 +895,7 @@ export function NovelStudioPage() {
             title="Buka Novel Reader Publik"
           >
             <ExternalLink size={13} />
-            <span>Reader</span>
+            <span className="studio-hide-xs">Reader</span>
           </Link>
 
           <button
@@ -821,7 +906,7 @@ export function NovelStudioPage() {
             onClick={() => void auth.signOut()}
           >
             <LogOut size={14} />
-            <span>Keluar</span>
+            <span className="studio-hide-xs">Keluar</span>
           </button>
         </div>
       </header>
@@ -831,6 +916,7 @@ export function NovelStudioPage() {
           <StudioMenuBar
             editor={editor}
             viewMode={viewMode}
+            studioTheme={studioTheme}
             showSidebar={showSidebar}
             showInspector={showInspector}
             showRuler={showRuler}
@@ -838,6 +924,7 @@ export function NovelStudioPage() {
             onSaveNow={() => {
               void autosave.flushSave().then(() => showNotice('Draft tersimpan.'));
             }}
+            onRefreshFromServer={() => void handleManualRefreshFromServer()}
             onNewChapter={() => void handleNewChapter()}
             onDuplicateChapter={() => {
               if (activeChapter) void handleDuplicateChapter(activeChapter);
@@ -845,6 +932,7 @@ export function NovelStudioPage() {
             onOpenNewNovel={() => setNewNovelOpen(true)}
             onOpenPublishModal={() => setPublishOpen(true)}
             onOpenImportLegacy={() => setImportOpen(true)}
+            onToggleTheme={toggleStudioTheme}
             onToggleSidebar={() => setShowSidebar((v) => !v)}
             onToggleInspector={() => setShowInspector((v) => !v)}
             onToggleRuler={() => setShowRuler((v) => !v)}
@@ -985,6 +1073,12 @@ export function NovelStudioPage() {
             </div>
           )}
 
+          <SlashCommandMenu
+            editor={editor}
+            onInsertBlock={handleInsertBlock}
+            keyDownHandlerRef={slashKeyDownRef}
+          />
+
           <footer className="studio-status-bar">
             <div className="studio-status-left">
               <span className="tabular-nums">{metrics.wordCount.toLocaleString('id-ID')} kata</span>
@@ -1014,6 +1108,7 @@ export function NovelStudioPage() {
             mode={viewMode}
             chapters={chapters}
             activeChapter={activeChapter}
+            initialTheme={studioTheme}
             onExitPreview={() => setViewMode('editor')}
             onChangeMode={setViewMode}
           />

@@ -7,9 +7,16 @@ import {
   detectVersionConflict,
   duplicateChapterPayload,
   hasUnpublishedChanges,
+  mergeSyncedChapterMetadata,
   moveChapterByDelta,
   reorderChaptersByIds,
+  shouldClearPendingSave,
+  shouldReloadEditorDocument,
 } from '../src/studio/utils/chapterOrdering';
+import {
+  detectSlashTriggerText,
+  filterSlashCommands,
+} from '../src/studio/editor/slashCommands';
 import {
   buildAllLegacyChapterRows,
   buildDefaultNovelPayload,
@@ -323,4 +330,85 @@ test('legacy import builders preserve all 118 chapter metadata, audio cues, VFX,
   const audioAssets = buildLegacyAudioAssetRows('novel-uuid-1');
   assert.ok(audioAssets.length >= 9);
   assert.ok(audioAssets.every((a) => a.url.startsWith('/audio/')));
+});
+
+test('cursor-preserving autosave never reloads editor on version bump and keeps mid-flight typing', () => {
+  // Same chapter ID and no explicit reload request => never call setContent
+  assert.equal(
+    shouldReloadEditorDocument({
+      loadedChapterId: 'ch-1',
+      nextChapterId: 'ch-1',
+      syncedReloadCounter: 0,
+      reloadCounter: 0,
+    }),
+    false,
+  );
+
+  // Switching chapters or explicit server reload => must load into editor
+  assert.equal(
+    shouldReloadEditorDocument({
+      loadedChapterId: 'ch-1',
+      nextChapterId: 'ch-2',
+      syncedReloadCounter: 0,
+      reloadCounter: 0,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldReloadEditorDocument({
+      loadedChapterId: 'ch-1',
+      nextChapterId: 'ch-1',
+      syncedReloadCounter: 0,
+      reloadCounter: 1,
+    }),
+    true,
+  );
+
+  // Sequence tracking keeps newer keystrokes typed while request #1 was flying
+  assert.equal(shouldClearPendingSave(4, 4), true);
+  assert.equal(shouldClearPendingSave(4, 5), false);
+
+  const localNewer = createNewChapterPayload('novel-1', [], {
+    title: 'Judul Terbaru Saat Mengetik',
+    draftHtml: '<p>Paragraf terbaru yang belum terunggah</p>',
+    draftVersion: 1,
+  });
+  const serverStaleResponse = {
+    ...localNewer,
+    title: 'Judul Lama',
+    draftHtml: '<p>Paragraf lama</p>',
+    draftVersion: 2,
+    updatedAt: '2026-11-14T20:00:00.000Z',
+  };
+
+  const merged = mergeSyncedChapterMetadata(localNewer, serverStaleResponse, true);
+  assert.equal(merged.draftVersion, 2);
+  assert.equal(merged.title, 'Judul Terbaru Saat Mengetik');
+  assert.equal(merged.draftHtml, '<p>Paragraf terbaru yang belum terunggah</p>');
+});
+
+test('slash command trigger detects `/` cleanly and filters novel blocks', () => {
+  const startMatch = detectSlashTriggerText('/');
+  assert.deepEqual(startMatch, {
+    query: '',
+    slashOffsetInParent: 0,
+    endOffsetInParent: 1,
+  });
+
+  const midLineMatch = detectSlashTriggerText('Hari itu /dialog');
+  assert.deepEqual(midLineMatch, {
+    query: 'dialog',
+    slashOffsetInParent: 9,
+    endOffsetInParent: 16,
+  });
+
+  // Mid-word slashes like fractions or URLs must NOT trigger menu
+  assert.equal(detectSlashTriggerText('Senin/Selasa'), null);
+  assert.equal(detectSlashTriggerText('https://example.com'), null);
+
+  const dialogMatches = filterSlashCommands('dialog');
+  assert.ok(dialogMatches.some((item) => item.id === 'dialogue'));
+
+  const bgmMatches = filterSlashCommands('musik');
+  assert.ok(bgmMatches.some((item) => item.id === 'bgm'));
 });

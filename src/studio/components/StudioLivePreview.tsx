@@ -20,6 +20,7 @@ interface StudioLivePreviewProps {
   mode: Exclude<StudioViewMode, 'editor'>;
   chapters: StudioChapter[];
   activeChapter: StudioChapter;
+  initialTheme?: 'dark' | 'light';
   onExitPreview: () => void;
   onChangeMode: (mode: StudioViewMode) => void;
 }
@@ -70,10 +71,11 @@ export function StudioLivePreview({
   mode,
   chapters,
   activeChapter,
+  initialTheme = 'dark',
   onExitPreview,
   onChangeMode,
 }: StudioLivePreviewProps) {
-  const [previewTheme, setPreviewTheme] = useState<'dark' | 'light'>('dark');
+  const [previewTheme, setPreviewTheme] = useState<'dark' | 'light'>(initialTheme);
   const [novelIndex, setNovelIndex] = useState(() =>
     Math.max(
       0,

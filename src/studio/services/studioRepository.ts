@@ -268,6 +268,19 @@ export async function fetchChaptersByNovel(novelId: string): Promise<StudioChapt
   return (data as DbChapterRow[]).map(mapChapterRow);
 }
 
+export async function fetchChapterById(chapterId: string): Promise<StudioChapter> {
+  const supabase = requireSupabaseClient();
+  const { data, error } = await supabase
+    .from('chapters')
+    .select('*')
+    .eq('id', chapterId)
+    .single();
+  if (error || !data) {
+    throw new Error(error?.message || 'Gagal memuat ulang bab dari server.');
+  }
+  return mapChapterRow(data as DbChapterRow);
+}
+
 export async function insertChapter(chapter: StudioChapter): Promise<StudioChapter> {
   const supabase = requireSupabaseClient();
   const { data, error } = await supabase

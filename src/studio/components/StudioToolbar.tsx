@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditorState, type Editor } from '@tiptap/react';
 import {
   AlignCenter,
@@ -47,22 +47,23 @@ const LINE_SPACINGS = [
 ];
 
 const TEXT_COLORS = [
-  '#1e293b',
-  '#475569',
-  '#b91c1c',
-  '#c97d5a',
-  '#1d4ed8',
-  '#15803d',
-  '#7e22ce',
+  { label: 'Otomatis', value: '' },
+  { label: 'Krem Hangat', value: '#eadecc' },
+  { label: 'Tinta Gelap', value: '#1a1814' },
+  { label: 'Terakota', value: '#e0926d' },
+  { label: 'Karat', value: '#c97d5a' },
+  { label: 'Emas', value: '#eab308' },
+  { label: 'Zamrud', value: '#4ade80' },
+  { label: 'Biru Lembut', value: '#60a5fa' },
 ];
 
 const HIGHLIGHT_COLORS = [
   { label: 'Tanpa Sorotan', value: '' },
-  { label: 'Kuning', value: '#fef08a' },
-  { label: 'Krem Hangat', value: '#fde68a' },
-  { label: 'Biru Lembut', value: '#bfdbfe' },
-  { label: 'Hijau Lembut', value: '#bbf7d0' },
-  { label: 'Mawar', value: '#fbcfe8' },
+  { label: 'Terakota Lembut', value: 'rgba(224, 146, 109, 0.28)' },
+  { label: 'Kuning', value: 'rgba(250, 204, 21, 0.28)' },
+  { label: 'Biru Lembut', value: 'rgba(96, 165, 250, 0.25)' },
+  { label: 'Hijau Lembut', value: 'rgba(74, 222, 128, 0.24)' },
+  { label: 'Mawar', value: 'rgba(244, 114, 182, 0.24)' },
 ];
 
 export function StudioToolbar({
@@ -74,6 +75,25 @@ export function StudioToolbar({
   onInsertBlock,
 }: StudioToolbarProps) {
   const [blockMenuOpen, setBlockMenuOpen] = useState(false);
+  const blockWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!blockMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (blockWrapRef.current && !blockWrapRef.current.contains(e.target as Node)) {
+        setBlockMenuOpen(false);
+      }
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setBlockMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [blockMenuOpen]);
 
   const activeState = useEditorState({
     editor,
@@ -94,7 +114,7 @@ export function StudioToolbar({
           fontFamily: "'Lora', Georgia, serif",
           fontSize: '17px',
           lineHeight: '1.8',
-          color: '#1e293b',
+          color: '',
           highlight: '',
           align: 'left',
         };
@@ -140,7 +160,7 @@ export function StudioToolbar({
         fontFamily: attrs.fontFamily || "'Lora', Georgia, serif",
         fontSize: attrs.fontSize || '17px',
         lineHeight: paraAttrs.lineHeight || '1.8',
-        color: attrs.color || '#1e293b',
+        color: attrs.color || '',
         highlight: hlAttrs.color || '',
         align,
       };
@@ -313,19 +333,28 @@ export function StudioToolbar({
         <label className="studio-tb-color-wrap" title="Warna teks" aria-label="Warna teks">
           <span
             className="studio-tb-color-letter"
-            style={{ borderBottomColor: activeState?.color || '#1e293b' }}
+            style={{
+              borderBottomColor: activeState?.color || 'var(--studio-accent)',
+            }}
           >
             A
           </span>
           <select
             className="studio-tb-color-select"
             aria-label="Pilih warna teks"
-            value={activeState?.color || '#1e293b'}
-            onChange={(e) => editor?.chain().focus().setColor(e.target.value).run()}
+            value={activeState?.color || ''}
+            onChange={(e) => {
+              if (!editor) return;
+              if (!e.target.value) {
+                editor.chain().focus().unsetColor().run();
+              } else {
+                editor.chain().focus().setColor(e.target.value).run();
+              }
+            }}
           >
-            {TEXT_COLORS.map((hex) => (
-              <option key={hex} value={hex}>
-                {hex}
+            {TEXT_COLORS.map((c) => (
+              <option key={c.label} value={c.value}>
+                {c.label}
               </option>
             ))}
           </select>
@@ -458,7 +487,7 @@ export function StudioToolbar({
 
       <div className="studio-tb-sep" />
 
-      <div className="studio-tb-group studio-tb-blocks-wrap">
+      <div ref={blockWrapRef} className="studio-tb-group studio-tb-blocks-wrap">
         <button
           type="button"
           className="studio-tb-insert-btn"
@@ -471,11 +500,7 @@ export function StudioToolbar({
         </button>
 
         {blockMenuOpen && (
-          <div
-            className="studio-menu-dropdown studio-blocks-dropdown"
-            role="menu"
-            onMouseLeave={() => setBlockMenuOpen(false)}
-          >
+          <div className="studio-menu-dropdown studio-blocks-dropdown" role="menu">
             {[
               { type: 'dialogueBlock', label: 'Dialog Karakter' },
               { type: 'innerThoughtBlock', label: 'Monolog Batin (Inner Thought)' },

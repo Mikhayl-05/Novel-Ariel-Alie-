@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   ArrowLeft,
-  BookOpen,
   Lock,
   LogOut,
+  Moon,
   ShieldAlert,
+  Sun,
 } from 'lucide-react';
 import type { StudioAuthStatus } from '../hooks/useStudioAuth';
 
@@ -16,6 +17,8 @@ interface AdminLoginViewProps {
   sessionExpiredNotice: boolean;
   submitting: boolean;
   userEmail?: string | null;
+  studioTheme: 'dark' | 'light';
+  onToggleTheme: () => void;
   onSignIn: (email: string, password: string) => Promise<boolean>;
   onSignOut: () => Promise<void>;
 }
@@ -26,6 +29,8 @@ export function AdminLoginView({
   sessionExpiredNotice,
   submitting,
   userEmail,
+  studioTheme,
+  onToggleTheme,
   onSignIn,
   onSignOut,
 }: AdminLoginViewProps) {
@@ -38,21 +43,42 @@ export function AdminLoginView({
   };
 
   return (
-    <div className="studio-auth-shell studio-allow-select">
+    <div
+      className={`studio-auth-shell studio-allow-select studio-theme-${studioTheme}`}
+    >
       <div className="studio-auth-topbar">
         <Link to="/" className="studio-auth-back-link">
           <ArrowLeft size={15} />
           <span>Kembali ke Novel Reader</span>
         </Link>
+
+        <button
+          type="button"
+          className="studio-auth-theme-btn"
+          onClick={onToggleTheme}
+          title={
+            studioTheme === 'dark'
+              ? 'Beralih ke Mode Terang'
+              : 'Beralih ke Mode Gelap'
+          }
+          aria-label={
+            studioTheme === 'dark'
+              ? 'Beralih ke Mode Terang'
+              : 'Beralih ke Mode Gelap'
+          }
+        >
+          {studioTheme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          <span>{studioTheme === 'dark' ? 'Terang' : 'Gelap'}</span>
+        </button>
       </div>
 
       <main className="studio-auth-card" aria-labelledby="studio-login-title">
         <div className="studio-auth-brand">
           <div className="studio-auth-logo" aria-hidden="true">
-            <BookOpen size={20} />
+            <span>✦</span>
           </div>
           <div>
-            <p className="studio-auth-eyebrow">Novel Ariel &amp; Alie</p>
+            <p className="studio-auth-eyebrow">Selamanya Itu Lama Banget</p>
             <h1 id="studio-login-title" className="studio-auth-title">
               Novel Studio
             </h1>
@@ -60,8 +86,8 @@ export function AdminLoginView({
         </div>
 
         <p className="studio-auth-desc">
-          Ruang penyuntingan naskah khusus administrator. Pendaftaran akun publik
-          dinonaktifkan.
+          Ruang penyuntingan naskah Ariel &amp; Alie khusus administrator.
+          Pendaftaran akun publik dinonaktifkan.
         </p>
 
         {status === 'loading' && (
